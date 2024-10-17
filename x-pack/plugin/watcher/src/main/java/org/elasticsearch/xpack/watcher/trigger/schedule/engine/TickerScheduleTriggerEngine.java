@@ -17,6 +17,8 @@ import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.xpack.core.watcher.support.WatcherDateTimeUtils;
 import org.elasticsearch.xpack.core.watcher.trigger.TriggerEvent;
 import org.elasticsearch.xpack.core.watcher.watch.Watch;
+import org.elasticsearch.xpack.core.watcher.watch.WatchStatus;
+import org.elasticsearch.xpack.watcher.trigger.schedule.IntervalSchedule;
 import org.elasticsearch.xpack.watcher.trigger.schedule.Schedule;
 import org.elasticsearch.xpack.watcher.trigger.schedule.ScheduleRegistry;
 import org.elasticsearch.xpack.watcher.trigger.schedule.ScheduleTrigger;
@@ -32,6 +34,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -67,7 +70,17 @@ public class TickerScheduleTriggerEngine extends ScheduleTriggerEngine {
         Map<String, ActiveSchedule> startingSchedules = Maps.newMapWithExpectedSize(jobs.size());
         for (Watch job : jobs) {
             if (job.trigger() instanceof ScheduleTrigger trigger) {
-                startingSchedules.put(job.id(), new ActiveSchedule(job.id(), trigger.getSchedule(), startTime));
+                if (trigger.getSchedule() instanceof IntervalSchedule) {
+                    long firstActivated = Optional.ofNullable(job.status())
+                        .map(WatchStatus::state)
+                        .map(WatchStatus.State::getTimestamp)
+                        .map(ZonedDateTime::toInstant)
+                        .map(Instant::toEpochMilli)
+                        .orElse(startTime);
+                    startingSchedules.put(job.id(), new ActiveSchedule(job.id(), trigger.getSchedule(), firstActivated));
+                } else {
+                    startingSchedules.put(job.id(), new ActiveSchedule(job.id(), trigger.getSchedule(), startTime));
+                }
             }
         }
         // why are we calling putAll() here instead of assigning a brand
@@ -108,7 +121,18 @@ public class TickerScheduleTriggerEngine extends ScheduleTriggerEngine {
         // watcher indexing listener
         // this also means that updating an existing watch would not retrigger the schedule time, if it remains the same schedule
         if (currentSchedule == null || currentSchedule.schedule.equals(trigger.getSchedule()) == false) {
-            schedules.put(watch.id(), new ActiveSchedule(watch.id(), trigger.getSchedule(), clock.millis()));
+            if (trigger.getSchedule() instanceof IntervalSchedule) {
+                long firstActivated = Optional.ofNullable(watch.status())
+                    .map(WatchStatus::state)
+                    .map(WatchStatus.State::getTimestamp)
+                    .map(ZonedDateTime::toInstant)
+                    .map(Instant::toEpochMilli)
+                    .orElse(clock.millis());
+                schedules.put(watch.id(), new ActiveSchedule(watch.id(), trigger.getSchedule(), firstActivated));
+            } else {
+                schedules.put(watch.id(), new ActiveSchedule(watch.id(), trigger.getSchedule(), clock.millis()));
+            }
+
         }
     }
 
